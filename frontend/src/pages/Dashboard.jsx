@@ -143,7 +143,7 @@ const Dashboard = () => {
     const newTicket = {
       ticketId,
       orderNumber: orderCounter,
-      customerName: 'Guest',
+      customerName: '',
       items: [],
       totalPrice: 0,
       status: 'active',
