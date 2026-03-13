@@ -4,7 +4,7 @@ import api, { getImageUrl } from '../services/api.js';
 
 const initialForm = {
   name: '',
-  category: 'Burgers',
+  category: 'Burger',
   price: '',
 };
 
@@ -23,7 +23,7 @@ const MenuManagement = () => {
   }, []);
 
   const openItemPopup = async (initialValues = initialForm) => {
-    const categoryOptions = ['Burgers', 'Rice Meals', 'Fries', 'Drinks']
+    const categoryOptions = ['Burger', 'Rice Meal', 'Fries', 'Drinks']
       .map((category) => {
         const selected = normalizeCategory(initialValues.category) === category ? 'selected' : '';
         return `<option value="${category}" ${selected}>${category}</option>`;
@@ -81,21 +81,58 @@ const MenuManagement = () => {
       return;
     }
 
-    const payload = new FormData();
-    payload.append('name', values.name);
-    payload.append('category', values.category);
-    payload.append('price', values.price);
-    if (values.image) {
-      payload.append('image', values.image);
-    }
+    try {
+      const payload = new FormData();
+      payload.append('name', values.name);
+      payload.append('category', values.category);
+      payload.append('price', values.price);
+      if (values.image) {
+        payload.append('image', values.image);
+      }
 
-    if (item?._id) {
-      await api.put(`/menu/${item._id}`, payload);
-    } else {
-      await api.post('/menu', payload);
-    }
+      console.log('Sending menu item data:', {
+        name: values.name,
+        category: values.category,
+        price: values.price,
+        hasImage: !!values.image,
+      });
 
-    await loadItems();
+      if (item?._id) {
+        await api.put(`/menu/${item._id}`, payload);
+        await Swal.fire({
+          icon: 'success',
+          title: 'Success!',
+          text: 'Menu item updated successfully.',
+          timer: 2000,
+        });
+      } else {
+        await api.post('/menu', payload);
+        await Swal.fire({
+          icon: 'success',
+          title: 'Success!',
+          text: 'Menu item added successfully and saved to database.',
+          timer: 2000,
+        });
+      }
+
+      await loadItems();
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to save menu item';
+      const errorDetails = error.response?.data?.error || '';
+      
+      console.error('Menu item save failed:', {
+        status: error.response?.status,
+        message: errorMessage,
+        details: errorDetails,
+        data: error.response?.data,
+      });
+
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage,
+      });
+    }
   };
 
   const handleDelete = async (id) => {

@@ -20,7 +20,21 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'kiosk-admin-token';
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/menu') || req.path.startsWith('/api/addons')) {
+    console.log('\n[REQUEST]', req.method, req.path);
+    console.log('Headers:', {
+      'content-type': req.headers['content-type'],
+      'content-length': req.headers['content-length'],
+    });
+  }
+  next();
+});
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const authMiddleware = (req, res, next) => {
@@ -68,16 +82,28 @@ const seedAdmin = async () => {
 
 const start = async () => {
   try {
+    console.log('\n🔄 Starting Kiosk Backend...');
+    console.log('MongoDB URI:', MONGO_URI);
+    console.log('Connecting to MongoDB...\n');
+    
     await mongoose.connect(MONGO_URI);
-    console.log('Connected to MongoDB');
+    console.log('✓ Connected to MongoDB successfully\n');
 
     await seedAdmin();
 
     app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT}`);
+      console.log(`✓ Server running on http://localhost:${PORT}\n`);
+      console.log('Ready to accept requests!');
+      console.log('Test URL: http://localhost:5000/api/health\n');
     });
   } catch (error) {
-    console.error('Failed to start server:', error.message);
+    console.error('\n✗ Failed to start server');
+    console.error('Error:', error.message);
+    console.error('\nPossible causes:');
+    console.error('1. MongoDB is not running');
+    console.error('2. MongoDB is not installed');
+    console.error('3. MongoDB is running on a different port\n');
+    console.error('To fix: Start MongoDB with: mongod\n');
     process.exit(1);
   }
 };

@@ -6,18 +6,18 @@ import OrderPanel from '../components/OrderPanel.jsx';
 import TicketCarousel from '../components/TicketCarousel.jsx';
 import api from '../services/api.js';
 
-const categoryOrder = ['All', 'Burgers', 'Rice Meals', 'Fries', 'Drinks'];
-const cardCategoryPriority = ['Burgers', 'Rice Meals', 'Fries', 'Drinks'];
+const categoryOrder = ['All', 'Burger', 'Rice Meal', 'Fries', 'Drinks'];
+const cardCategoryPriority = ['Burger', 'Rice Meal', 'Fries', 'Drinks'];
 
 // Addon mapping by category
 const categoryAddonMap = {
-  Burgers: [
+  Burger: [
     { name: 'Sliced Cheese', price: 25 },
     { name: 'Melted Cheese', price: 15 },
     { name: 'Bacon', price: 10 },
     { name: 'Sliced Pineapple', price: 25 },
   ],
-  'Rice Meals': [
+  'Rice Meal': [
     { name: 'Egg', price: 15 },
     { name: 'BBQ Sauce', price: 15 },
     { name: 'Garlic Mayo', price: 15 },

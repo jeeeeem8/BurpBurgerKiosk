@@ -40,117 +40,137 @@ const generateOrderNumber = async () => {
 };
 
 router.post('/', async (req, res) => {
-  const { customerName, items, orderNumber, status, totalPrice: payloadTotalPrice } = req.body;
+  try {
+    const { customerName, items, orderNumber, status, totalPrice: payloadTotalPrice } = req.body;
 
-  if (!Array.isArray(items) || !items.length) {
-    return res.status(400).json({ message: 'Order items are required.' });
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ message: 'Order items are required.' });
+    }
+
+    const normalizedItems = items.map((item) => {
+      const itemType = item.type === 'mix-match' ? 'mix-match' : 'regular';
+      const quantity = Math.max(1, Number(item.quantity || 1));
+      const price = itemType === 'mix-match' ? MIX_MATCH_PRICE : Number(item.price || 0);
+
+      return {
+        type: itemType,
+        menuItemId: item.menuItemId || '',
+        name: item.name,
+        meals: Array.isArray(item.meals) ? item.meals : [],
+        category: item.category || '',
+        price,
+        quantity,
+        addons: Array.isArray(item.addons) ? item.addons : [],
+        requestNote: item.requestNote || '',
+      };
+    });
+
+    const now = new Date();
+    const calculatedTotalPrice = normalizedItems.reduce((sum, item) => {
+      const addonsTotal = (item.addons || []).reduce((addonSum, addon) => addonSum + Number(addon.price), 0);
+      return sum + (Number(item.price) + addonsTotal) * Number(item.quantity);
+    }, 0);
+
+    const totalPrice = Number(payloadTotalPrice) > 0 ? Number(payloadTotalPrice) : calculatedTotalPrice;
+
+    let resolvedOrderNumber = Number(orderNumber) > 0 ? Number(orderNumber) : await generateOrderNumber();
+    const existing = await Order.findOne({ orderNumber: resolvedOrderNumber }).lean();
+    if (existing) {
+      resolvedOrderNumber = await generateOrderNumber();
+    }
+
+    const order = await Order.create({
+      orderNumber: resolvedOrderNumber,
+      customerName: customerName || 'Walk-in Customer',
+      items: normalizedItems,
+      addons: normalizedItems.flatMap((item) => (item.addons || []).map((addon) => addon.name)),
+      quantity: normalizedItems.reduce((sum, item) => sum + Number(item.quantity), 0),
+      totalPrice,
+      requestNote: normalizedItems.map((item) => item.requestNote).filter(Boolean).join(' | '),
+      status: status || 'completed',
+      date: formatDate(now),
+      time: formatTime(now),
+    });
+
+    return res.status(201).json(order);
+  } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ message: 'Failed to create order.', error: error.message });
   }
-
-  const normalizedItems = items.map((item) => {
-    const itemType = item.type === 'mix-match' ? 'mix-match' : 'regular';
-    const quantity = Math.max(1, Number(item.quantity || 1));
-    const price = itemType === 'mix-match' ? MIX_MATCH_PRICE : Number(item.price || 0);
-
-    return {
-      type: itemType,
-      menuItemId: item.menuItemId || '',
-      name: item.name,
-      meals: Array.isArray(item.meals) ? item.meals : [],
-      category: item.category || '',
-      price,
-      quantity,
-      addons: Array.isArray(item.addons) ? item.addons : [],
-      requestNote: item.requestNote || '',
-    };
-  });
-
-  const now = new Date();
-  const calculatedTotalPrice = normalizedItems.reduce((sum, item) => {
-    const addonsTotal = (item.addons || []).reduce((addonSum, addon) => addonSum + Number(addon.price), 0);
-    return sum + (Number(item.price) + addonsTotal) * Number(item.quantity);
-  }, 0);
-
-  const totalPrice = Number(payloadTotalPrice) > 0 ? Number(payloadTotalPrice) : calculatedTotalPrice;
-
-  let resolvedOrderNumber = Number(orderNumber) > 0 ? Number(orderNumber) : await generateOrderNumber();
-  const existing = await Order.findOne({ orderNumber: resolvedOrderNumber }).lean();
-  if (existing) {
-    resolvedOrderNumber = await generateOrderNumber();
-  }
-
-  const order = await Order.create({
-    orderNumber: resolvedOrderNumber,
-    customerName: customerName || 'Walk-in Customer',
-    items: normalizedItems,
-    addons: normalizedItems.flatMap((item) => (item.addons || []).map((addon) => addon.name)),
-    quantity: normalizedItems.reduce((sum, item) => sum + Number(item.quantity), 0),
-    totalPrice,
-    requestNote: normalizedItems.map((item) => item.requestNote).filter(Boolean).join(' | '),
-    status: status || 'completed',
-    date: formatDate(now),
-    time: formatTime(now),
-  });
-
-  return res.status(201).json(order);
 });
 
 router.get('/', async (req, res) => {
-  const { date, status, period } = req.query;
-  const query = {};
+  try {
+    const { date, status, period } = req.query;
+    const query = {};
 
-  if (date) {
-    query.date = date;
-  }
-
-  if (status) {
-    query.status = status;
-  }
-
-  if (period && period !== 'all') {
-    const start = getPeriodStart(period);
-    if (start) {
-      query.createdAt = { $gte: start };
+    if (date) {
+      query.date = date;
     }
-  }
 
-  const orders = await Order.find(query).sort({ createdAt: -1 });
-  res.json(orders);
+    if (status) {
+      query.status = status;
+    }
+
+    if (period && period !== 'all') {
+      const start = getPeriodStart(period);
+      if (start) {
+        query.createdAt = { $gte: start };
+      }
+    }
+
+    const orders = await Order.find(query).sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ message: 'Failed to fetch orders.', error: error.message });
+  }
 });
 
 router.delete('/purge/by-period', async (req, res) => {
-  const { period, password } = req.body || {};
-  const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+  try {
+    const { period, password } = req.body || {};
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
 
-  if (password !== adminPassword) {
-    return res.status(401).json({ message: 'Invalid admin password.' });
-  }
-
-  const query = {};
-  if (period && period !== 'all') {
-    const start = getPeriodStart(period);
-    if (start) {
-      query.createdAt = { $gte: start };
+    if (password !== adminPassword) {
+      return res.status(401).json({ message: 'Invalid admin password.' });
     }
-  }
 
-  const result = await Order.deleteMany(query);
-  return res.json({ deletedCount: result.deletedCount || 0 });
+    const query = {};
+    if (period && period !== 'all') {
+      const start = getPeriodStart(period);
+      if (start) {
+        query.createdAt = { $gte: start };
+      }
+    }
+
+    const result = await Order.deleteMany(query);
+    return res.json({ deletedCount: result.deletedCount || 0 });
+  } catch (error) {
+    console.error('Error purging orders:', error);
+    res.status(500).json({ message: 'Failed to purge orders.', error: error.message });
+  }
 });
 
 router.delete('/:id', async (req, res) => {
-  const { password } = req.body || {};
-  const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+  try {
+    const { password } = req.body || {};
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
 
-  if (password !== adminPassword) {
-    return res.status(401).json({ message: 'Invalid admin password.' });
+    if (password !== adminPassword) {
+      return res.status(401).json({ message: 'Invalid admin password.' });
+    }
+
+    const order = await Order.findByIdAndDelete(req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found.' });
+    }
+
+    return res.json({ message: 'Order deleted permanently.' });
+  } catch (error) {
+    console.error('Error deleting order:', error);
+    res.status(500).json({ message: 'Failed to delete order.', error: error.message });
   }
-
-  const order = await Order.findByIdAndDelete(req.params.id);
-  if (!order) {
-    return res.status(404).json({ message: 'Order not found.' });
-  }
-
-  return res.json({ message: 'Order deleted permanently.' });
 });
 
 router.patch('/:id/complete', async (req, res) => {
