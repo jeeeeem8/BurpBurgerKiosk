@@ -7,8 +7,10 @@ const path = require('path');
 const User = require('./models/User');
 const addonRoutes = require('./routes/addonRoutes');
 const authRoutes = require('./routes/authRoutes');
+const inventoryRoutes = require('./routes/inventoryRoutes');
 const menuRoutes = require('./routes/menuRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const { seedInventoryDefaults } = require('./services/inventoryService');
 
 dotenv.config();
 
@@ -25,7 +27,12 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Request logging middleware
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/menu') || req.path.startsWith('/api/addons')) {
+  if (
+    req.path.startsWith('/api/menu') ||
+    req.path.startsWith('/api/addons') ||
+    req.path.startsWith('/api/orders') ||
+    req.path.startsWith('/api/inventory')
+  ) {
     console.log('\n[REQUEST]', req.method, req.path);
     console.log('Headers:', {
       'content-type': req.headers['content-type'],
@@ -38,7 +45,13 @@ app.use((req, res, next) => {
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const authMiddleware = (req, res, next) => {
-  if (req.path.startsWith('/auth') || req.path === '/health') {
+  // Public routes that don't require authentication
+  // Note: req.path for /api-mounted middleware doesn't include /api prefix
+  if (
+    req.path.startsWith('/auth') || 
+    req.path === '/health' || 
+    req.path === '/orders/active/list'
+  ) {
     return next();
   }
 
@@ -57,6 +70,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/addons', addonRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/inventory', inventoryRoutes);
 
 app.get('/', (req, res) => {
   res.json({
@@ -90,6 +104,7 @@ const start = async () => {
     console.log('✓ Connected to MongoDB successfully\n');
 
     await seedAdmin();
+    await seedInventoryDefaults();
 
     app.listen(PORT, () => {
       console.log(`✓ Server running on http://localhost:${PORT}\n`);

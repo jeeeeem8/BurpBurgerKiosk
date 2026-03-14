@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { SkeletonPage } from './Skeleton.jsx';
 import {
   HiBars3,
   HiOutlineClipboardDocumentList,
@@ -30,13 +31,19 @@ const Sidebar = () => {
   };
 
   return (
-    <div className="min-h-screen md:flex">
-      <header className="sticky top-0 z-30 flex items-center justify-between bg-slate-900 px-4 py-3 text-white md:hidden">
-        <h1 className="text-base font-bold">Burp Burger</h1>
+    <div className="flex h-screen flex-col overflow-hidden md:flex-row">
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-slate-100 px-4 py-3 text-slate-900 md:hidden">
+        <div className="flex items-center gap-2">
+          <img
+            src="/kiosklogo-trimmed.png"
+            alt="Burp Burger"
+            className="h-10 w-auto object-contain"
+          />
+        </div>
         <button
           type="button"
           onClick={() => setIsMobileOpen((prev) => !prev)}
-          className="rounded-md bg-slate-800 p-2"
+          className="rounded-md bg-white p-2 text-slate-800 ring-1 ring-slate-200"
           aria-label="Toggle menu"
         >
           {isMobileOpen ? <HiXMark className="h-5 w-5" /> : <HiBars3 className="h-5 w-5" />}
@@ -60,16 +67,22 @@ const Sidebar = () => {
         <aside
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
-          className={`flex h-full flex-col bg-slate-900 text-white transition-[width] duration-300 ${
+          className={`flex h-full flex-col border-r border-slate-200 bg-slate-100 text-slate-900 transition-[width] duration-300 ${
             showExpandedContent ? 'md:w-60' : 'md:w-[140px]'
           } w-64`}
         >
-          <div className="flex h-14 items-center justify-between border-b border-slate-700/60 px-4">
-            <h1 className="whitespace-nowrap text-base font-bold tracking-tight text-center">Burp Burger</h1>
+          <div className="flex h-16 items-center justify-between border-b border-slate-200 px-4">
+            <div className="flex items-center gap-2 overflow-hidden">
+              <img
+                src="/kiosklogo-trimmed.png"
+                alt="Burp Burger"
+                className="h-10 w-auto object-contain"
+              />
+            </div>
             <button
               type="button"
               onClick={() => setIsMobileOpen(false)}
-              className="rounded-lg bg-slate-800 p-1.5 hover:bg-slate-700 md:hidden"
+              className="rounded-lg bg-white p-1.5 text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50 md:hidden"
               aria-label="Close menu"
             >
               <HiXMark className="h-5 w-5" />
@@ -93,7 +106,7 @@ const Sidebar = () => {
                     } ${
                       isActive
                         ? 'bg-amber-500 text-white'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        : 'text-slate-700 hover:bg-white hover:text-slate-900'
                     }`
                   }
                 >
@@ -104,11 +117,11 @@ const Sidebar = () => {
             })}
           </nav>
 
-          <div className="border-t border-slate-700/60 p-2 pb-3">
+          <div className="border-t border-slate-200 p-2 pb-3">
             <button
               type="button"
               onClick={handleLogout}
-              className={`flex w-full items-center gap-3 rounded-xl py-3 text-sm font-medium text-slate-300 transition-colors hover:bg-rose-500 hover:text-white ${
+              className={`flex w-full items-center gap-3 rounded-xl py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-rose-500 hover:text-white ${
                 showExpandedContent ? 'px-3' : 'justify-center px-2'
               }`}
             >
@@ -119,8 +132,10 @@ const Sidebar = () => {
         </aside>
       </div>
 
-      <main className="min-w-0 flex-1 p-3 sm:p-4 md:p-6">
-        <Outlet />
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
+        <Suspense fallback={<SkeletonPage />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

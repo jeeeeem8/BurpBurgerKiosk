@@ -1,5 +1,10 @@
 const express = require('express');
 const Order = require('../models/Order');
+const {
+  deductInventoryByOrder,
+  getOutOfStockItemsForOrder,
+  seedInventoryDefaults,
+} = require('../services/inventoryService');
 
 const router = express.Router();
 const MIX_MATCH_PRICE = 158;
@@ -65,6 +70,18 @@ router.post('/', async (req, res) => {
       };
     });
 
+    if ((status || 'completed') === 'preparing') {
+      await seedInventoryDefaults();
+      const outOfStockItems = await getOutOfStockItemsForOrder({ items: normalizedItems });
+
+      if (outOfStockItems.length) {
+        return res.status(409).json({
+          message: 'Some items are out of stock. Order was not placed.',
+          outOfStockItems,
+        });
+      }
+    }
+
     const now = new Date();
     const calculatedTotalPrice = normalizedItems.reduce((sum, item) => {
       const addonsTotal = (item.addons || []).reduce((addonSum, addon) => addonSum + Number(addon.price), 0);
@@ -127,6 +144,19 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get all preparing orders for kitchen display (dashboard ticket carousel)
+router.get('/active/list', async (req, res) => {
+  try {
+    const orders = await Order.find({ status: 'preparing' })
+      .sort({ createdAt: -1 });
+    
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching preparing orders:', error);
+    res.status(500).json({ message: 'Failed to fetch preparing orders.', error: error.message });
+  }
+});
+
 router.delete('/purge/by-period', async (req, res) => {
   try {
     const { period, password } = req.body || {};
@@ -174,13 +204,26 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.patch('/:id/complete', async (req, res) => {
-  const order = await Order.findByIdAndUpdate(req.params.id, { status: 'completed' }, { new: true });
+  await seedInventoryDefaults();
+  const order = await Order.findById(req.params.id);
 
   if (!order) {
     return res.status(404).json({ message: 'Order not found.' });
   }
 
-  return res.json(order);
+  if (order.status === 'completed') {
+    return res.status(400).json({ message: 'Order is already completed.' });
+  }
+
+  const deduction = await deductInventoryByOrder(order);
+  order.status = 'completed';
+  await order.save();
+
+  return res.json({
+    order,
+    inventoryUpdates: deduction.updates,
+    lowStockItems: deduction.lowStockItems,
+  });
 });
 
 router.get('/sales/summary', async (req, res) => {

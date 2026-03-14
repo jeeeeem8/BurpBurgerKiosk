@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Swal from 'sweetalert2';
 import api from '../services/api.js';
+import { SkeletonBox, SkeletonTableRows } from '../components/Skeleton.jsx';
 
 const periodOptions = [
   { value: 'day', label: 'Day' },
@@ -11,6 +12,7 @@ const periodOptions = [
 
 const TotalSales = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('day');
+  const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState({
     selected: { sales: 0, orders: 0 },
     periods: { day: { sales: 0, orders: 0 }, week: { sales: 0, orders: 0 }, month: { sales: 0, orders: 0 }, year: { sales: 0, orders: 0 } },
@@ -22,8 +24,12 @@ const TotalSales = () => {
   });
 
   const loadSummary = async () => {
-    const { data } = await api.get('/orders/sales/summary', { params: { period: selectedPeriod } });
-    setSummary(data);
+    try {
+      const { data } = await api.get('/orders/sales/summary', { params: { period: selectedPeriod } });
+      setSummary(data);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -79,6 +85,45 @@ const TotalSales = () => {
       });
     }
   };
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <SkeletonBox className="h-8 w-36" />
+          <div className="flex gap-2">
+            {[0, 1, 2, 3].map((i) => <SkeletonBox key={i} className="h-9 w-16" />)}
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-2xl bg-white p-5 shadow-sm">
+              <SkeletonBox className="mb-3 h-4 w-28" />
+              <SkeletonBox className="h-9 w-32" />
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-2xl bg-white p-5 shadow-sm">
+              <SkeletonBox className="mb-3 h-4 w-16" />
+              <SkeletonBox className="mb-2 h-6 w-24" />
+              <SkeletonBox className="h-3 w-20" />
+            </div>
+          ))}
+        </div>
+        <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
+          <div className="border-b px-4 py-3">
+            <SkeletonBox className="h-6 w-40" />
+          </div>
+          <table className="min-w-full">
+            <thead><tr className="h-10 bg-slate-100"><th colSpan="3" /></tr></thead>
+            <tbody><SkeletonTableRows rows={5} cols={3} /></tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

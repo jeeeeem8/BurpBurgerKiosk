@@ -1,17 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Swal from 'sweetalert2';
 import CategoryTabs from '../components/CategoryTabs.jsx';
 import FoodCard from '../components/FoodCard.jsx';
 import OrderPanel from '../components/OrderPanel.jsx';
 import TicketCarousel from '../components/TicketCarousel.jsx';
+import useTickets from '../hooks/useTickets.js';
 import api from '../services/api.js';
+import { SkeletonBox } from '../components/Skeleton.jsx';
 
 const categoryOrder = ['All', 'Burger', 'Rice Meal', 'Fries', 'Drinks'];
 const cardCategoryPriority = ['Burger', 'Rice Meal', 'Fries', 'Drinks'];
 
-// Addon mapping by category
+// Addon mapping by category (supports both singular and plural)
 const categoryAddonMap = {
   Burger: [
+    { name: 'Sliced Cheese', price: 25 },
+    { name: 'Melted Cheese', price: 15 },
+    { name: 'Bacon', price: 10 },
+    { name: 'Sliced Pineapple', price: 25 },
+  ],
+  Burgers: [
     { name: 'Sliced Cheese', price: 25 },
     { name: 'Melted Cheese', price: 15 },
     { name: 'Bacon', price: 10 },
@@ -22,13 +30,62 @@ const categoryAddonMap = {
     { name: 'BBQ Sauce', price: 15 },
     { name: 'Garlic Mayo', price: 15 },
   ],
+  'Rice Meals': [
+    { name: 'Egg', price: 15 },
+    { name: 'BBQ Sauce', price: 15 },
+    { name: 'Garlic Mayo', price: 15 },
+  ],
 };
 
 const normalizeCategory = (category = '') => {
   if (category === 'Desserts') {
     return 'Fries';
   }
+  // Normalize to singular if plural
+  if (category === 'Burgers') {
+    return 'Burger';
+  }
+  if (category === 'Rice Meals') {
+    return 'Rice Meal';
+  }
   return category;
+};
+
+// Helper function to get add-ons for a category (checks both singular and plural)
+const getAddonsForCategory = (category) => {
+  if (!category) return [];
+  
+  const cat = String(category).trim();
+  
+  // Try direct match first
+  if (categoryAddonMap[cat]) {
+    return categoryAddonMap[cat];
+  }
+  
+  // Try normalized form
+  const normalized = normalizeCategory(cat);
+  if (categoryAddonMap[normalized]) {
+    return categoryAddonMap[normalized];
+  }
+  
+  // Case-insensitive match - try all keys in categoryAddonMap
+  for (const [key, addons] of Object.entries(categoryAddonMap)) {
+    if (key.toLowerCase() === cat.toLowerCase()) {
+      return addons;
+    }
+  }
+  
+  // Try singular if plural-like
+  if (cat.endsWith('s') && cat !== 'Fries' && cat !== 'Drinks') {
+    const singular = cat.slice(0, -1);
+    for (const [key, addons] of Object.entries(categoryAddonMap)) {
+      if (key.toLowerCase() === singular.toLowerCase()) {
+        return addons;
+      }
+    }
+  }
+  
+  return [];
 };
 
 const calculateTicketTotal = (items) => {
@@ -68,12 +125,27 @@ const Dashboard = () => {
   const [menuItems, setMenuItems] = useState([]);
   const [addons, setAddons] = useState([]);
   const [activeCategory, setActiveCategory] = useState('All');
-  const [tickets, setTickets] = useState([]);
   const [activeTicketId, setActiveTicketId] = useState(null);
   const [isMobileTicketWindowOpen, setIsMobileTicketWindowOpen] = useState(false);
-  const [orderCounter, setOrderCounter] = useState(1001);
   const [isPlacing, setIsPlacing] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
+  const [menuLoading, setMenuLoading] = useState(true);
+  const lowStockSignatureRef = useRef('');
+
+  // Use persistent ticket management hook (loads from database)
+  const { 
+    tickets, 
+    orderCounter, 
+    createTicket, 
+    updateTicket: updateTicketHook,
+    deleteTicket: deleteTicketHook 
+  } = useTickets();
+
+  // Filter to show only active and preparing tickets in carousel
+  const carouselTickets = useMemo(
+    () => tickets.filter((t) => t.status === 'active' || t.status === 'preparing'),
+    [tickets],
+  );
 
   const activeTicket = useMemo(
     () => tickets.find((ticket) => ticket.ticketId === activeTicketId) || null,
@@ -105,8 +177,8 @@ const Dashboard = () => {
       return a.name.localeCompare(b.name);
     });
 
-    // Add Mix & Match card at the beginning for Rice Meals
-    if (activeCategory === 'Rice Meals') {
+    // Show Buy 1 Take 1 card in Rice Meal tab and All Items view.
+    if (activeCategory === 'All' || activeCategory === 'Rice Meal' || activeCategory === 'Rice Meals') {
       return [
         {
           isMixMatch: true,
@@ -122,14 +194,18 @@ const Dashboard = () => {
   }, [activeCategory, menuItems]);
 
   const loadData = async () => {
-    const [menuResponse, addonsResponse] = await Promise.all([api.get('/menu'), api.get('/addons')]);
-    setMenuItems(
-      menuResponse.data.map((item) => ({
-        ...item,
-        category: normalizeCategory(item.category),
-      })),
-    );
-    setAddons(addonsResponse.data);
+    try {
+      const [menuResponse, addonsResponse] = await Promise.all([api.get('/menu'), api.get('/addons')]);
+      setMenuItems(
+        menuResponse.data.map((item) => ({
+          ...item,
+          category: normalizeCategory(item.category),
+        })),
+      );
+      setAddons(addonsResponse.data);
+    } finally {
+      setMenuLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -138,45 +214,76 @@ const Dashboard = () => {
     });
   }, []);
 
-  const createNewTicket = () => {
-    const ticketId = `ticket-${Date.now()}-${Math.round(Math.random() * 1000)}`;
-    const newTicket = {
-      ticketId,
-      orderNumber: orderCounter,
-      customerName: '',
-      items: [],
-      totalPrice: 0,
-      status: 'active',
-      placedOrderId: null,
-      createdAt: new Date().toISOString(),
-    };
+  const showLowStockToast = (lowStockItems) => {
+    if (!Array.isArray(lowStockItems) || !lowStockItems.length) {
+      return;
+    }
 
-    setTickets((prev) => [...prev, newTicket]);
-    setActiveTicketId(ticketId);
-    setOrderCounter((prev) => prev + 1);
+    const names = lowStockItems.slice(0, 3).map((item) => `${item.name} (${item.quantity})`).join(', ');
+    const extra = lowStockItems.length > 3 ? ` +${lowStockItems.length - 3} more` : '';
+
+    Swal.fire({
+      toast: true,
+      position: 'top',
+      icon: 'warning',
+      title: `Low stock (10 or less): ${names}${extra}`,
+      showConfirmButton: false,
+      timer: 5000,
+      timerProgressBar: true,
+      background: '#fff7ed',
+      color: '#9a3412',
+    });
+  };
+
+  const loadLowStockWarnings = async (showToast = false) => {
+    const { data } = await api.get('/inventory/low-stock', { params: { threshold: 10 } });
+    const lowStockItems = data?.items || [];
+    const signature = JSON.stringify(lowStockItems.map((item) => `${item.name}:${item.quantity}`));
+
+    if (showToast && lowStockItems.length && signature !== lowStockSignatureRef.current) {
+      showLowStockToast(lowStockItems);
+    }
+
+    lowStockSignatureRef.current = signature;
+  };
+
+  useEffect(() => {
+    loadLowStockWarnings(true).catch(() => {});
+
+    const intervalId = setInterval(() => {
+      loadLowStockWarnings(true).catch(() => {});
+    }, 15000);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const handleCreateNewTicket = () => {
+    const newTicket = createTicket();
+    setActiveTicketId(newTicket.ticketId);
+    
+    Swal.fire({
+      icon: 'success',
+      title: 'Ticket Created',
+      text: `Order #${newTicket.orderNumber} created`,
+      timer: 1500,
+      showConfirmButton: false,
+    });
   };
 
   const updateTicket = (ticketId, updater) => {
-    setTickets((prev) =>
-      prev.map((ticket) => {
-        if (ticket.ticketId !== ticketId) {
-          return ticket;
-        }
-
-        const updated = updater(ticket);
-        return {
-          ...updated,
-          totalPrice: calculateTicketTotal(updated.items),
-        };
-      }),
-    );
+    const ticket = tickets.find((t) => t.ticketId === ticketId);
+    if (ticket) {
+      const updated = updater(ticket);
+      const totalPrice = calculateTicketTotal(updated.items || ticket.items);
+      updateTicketHook(ticketId, { ...updated, totalPrice });
+    }
   };
 
   const openItemPopup = async (menuItem, initialItem = null) => {
     const selectedAddons = initialItem?.addons || [];
     
-    // Get category-specific add-ons
-    const categorySpecificAddons = categoryAddonMap[menuItem.category] || [];
+    // Get category-specific add-ons using helper function
+    const categorySpecificAddons = getAddonsForCategory(menuItem.category);
 
     const popup = await Swal.fire({
       title: menuItem.name,
@@ -218,7 +325,10 @@ const Dashboard = () => {
   };
 
   const openMixMatchPopup = async () => {
-    const riceMeals = menuItems.filter((item) => item.category === 'Rice Meals');
+    // Filter Rice Meals (handling both singular and plural)
+    const riceMeals = menuItems.filter((item) => 
+      item.category === 'Rice Meal' || item.category === 'Rice Meals'
+    );
 
     const buildMealCheckboxes = () => {
       return riceMeals
@@ -242,7 +352,7 @@ const Dashboard = () => {
             ${buildMealCheckboxes()}
           </div>
           <label style="font-size:13px;font-weight:600;">Add-ons</label>
-          <div style="max-height:140px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px;">${buildAddonHtml(categoryAddonMap['Rice Meals'], [])}</div>
+          <div style="max-height:140px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:8px;">${buildAddonHtml(getAddonsForCategory('Rice Meal'), [])}</div>
           <label style="font-size:13px;font-weight:600;">Special Request</label>
           <textarea id="swal-note" class="swal2-textarea" style="margin:0;height:80px;" placeholder="No onions, extra sauce..."></textarea>
         </div>
@@ -358,14 +468,12 @@ const Dashboard = () => {
       return;
     }
 
-    setTickets((prev) => {
-      const remaining = prev.filter((ticket) => ticket.ticketId !== ticketId);
-      if (activeTicketId === ticketId) {
-        setActiveTicketId(remaining[0]?.ticketId || null);
-        setIsMobileTicketWindowOpen(false);
-      }
-      return remaining;
-    });
+    deleteTicketHook(ticketId);
+    if (activeTicketId === ticketId) {
+      const remaining = tickets.filter((t) => t.ticketId !== ticketId);
+      setActiveTicketId(remaining[0]?.ticketId || null);
+      setIsMobileTicketWindowOpen(false);
+    }
   };
 
   const handleSelectTicket = (ticketId) => {
@@ -473,6 +581,27 @@ const Dashboard = () => {
         text: `Order #${activeTicket.orderNumber} has been saved.`,
       });
     } catch (error) {
+      const outOfStockItems = error.response?.data?.outOfStockItems || [];
+
+      if (error.response?.status === 409 && outOfStockItems.length) {
+        const names = outOfStockItems.slice(0, 3).map((item) => `${item.name} (${item.available})`).join(', ');
+        const extra = outOfStockItems.length > 3 ? ` +${outOfStockItems.length - 3} more` : '';
+
+        await Swal.fire({
+          toast: true,
+          position: 'top',
+          icon: 'warning',
+          title: `Out of stock: ${names}${extra}`,
+          text: 'Order was not placed.',
+          showConfirmButton: false,
+          timer: 4500,
+          timerProgressBar: true,
+          background: '#fef2f2',
+          color: '#991b1b',
+        });
+        return;
+      }
+
       await Swal.fire({
         icon: 'error',
         title: 'Failed',
@@ -510,19 +639,24 @@ const Dashboard = () => {
 
     setIsCompleting(true);
     try {
-      await api.patch(`/orders/${activeTicket.placedOrderId}/complete`);
+      const { data } = await api.patch(`/orders/${activeTicket.placedOrderId}/complete`);
 
-      setTickets((prev) => {
-        const remaining = prev.filter((ticket) => ticket.ticketId !== activeTicket.ticketId);
-        setActiveTicketId(remaining[0]?.ticketId || null);
-        return remaining;
-      });
+      deleteTicketHook(activeTicket.ticketId);
+      const remaining = tickets.filter((t) => t.ticketId !== activeTicket.ticketId);
+      setActiveTicketId(remaining[0]?.ticketId || null);
+      setIsMobileTicketWindowOpen(false);
 
       await Swal.fire({
         icon: 'success',
         title: 'Order Completed',
-        text: `Order #${activeTicket.orderNumber} marked completed.`,
+        text: `Order #${activeTicket.orderNumber} marked completed. Ticket removed from dashboard.`,
       });
+
+      if (data?.lowStockItems?.length) {
+        showLowStockToast(data.lowStockItems);
+      } else {
+        await loadLowStockWarnings(true);
+      }
     } catch (error) {
       await Swal.fire({
         icon: 'error',
@@ -535,12 +669,12 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="grid gap-4 pb-20 pt-24 sm:pb-0 sm:pt-0 xl:h-[calc(100vh-3rem)] xl:grid-rows-[auto_auto_minmax(0,1fr)] xl:overflow-hidden">
+    <div className="grid gap-4 pb-20 sm:pb-0 xl:h-[calc(100vh-3rem)] xl:grid-rows-[auto_auto_minmax(0,1fr)] xl:overflow-hidden">
       <TicketCarousel
-        className="fixed left-2 right-2 top-14 z-20 rounded-xl border border-slate-200 bg-slate-100/95 px-3 py-2 shadow-md backdrop-blur sm:static sm:rounded-2xl sm:border-none sm:bg-white sm:px-4 sm:py-4 sm:shadow-sm sm:backdrop-blur-0"
-        tickets={tickets}
+        className="sticky top-16 z-20 rounded-xl border border-slate-200 bg-slate-100/95 px-3 py-2 shadow-md backdrop-blur sm:static sm:rounded-2xl sm:border-none sm:bg-white sm:px-4 sm:py-4 sm:shadow-sm sm:backdrop-blur-0"
+        tickets={carouselTickets}
         activeTicketId={activeTicketId}
-        onCreateTicket={createNewTicket}
+        onCreateTicket={handleCreateNewTicket}
         onSelectTicket={handleSelectTicket}
         onDeleteTicket={handleDeleteTicket}
       />
@@ -556,9 +690,17 @@ const Dashboard = () => {
 
       <section className="grid gap-4 xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 2xl:grid-cols-4 xl:min-h-0 xl:content-start xl:overflow-y-auto xl:pr-2">
-          {filteredItems.map((item) => (
-            <FoodCard key={item._id} item={item} onAddItem={handleAddFoodToTicket} />
-          ))}
+          {menuLoading
+            ? Array.from({ length: 8 }, (_, i) => (
+                <div key={i} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <SkeletonBox className="mb-3 h-28 w-full rounded-xl" />
+                  <SkeletonBox className="mb-2 h-4 w-28" />
+                  <SkeletonBox className="h-4 w-16" />
+                </div>
+              ))
+            : filteredItems.map((item) => (
+                <FoodCard key={item._id} item={item} onAddItem={handleAddFoodToTicket} />
+              ))}
         </div>
 
         <div className="hidden xl:sticky xl:top-0 xl:block xl:self-start">
