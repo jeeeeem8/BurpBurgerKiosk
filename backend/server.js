@@ -20,6 +20,7 @@ const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/kiosk_orde
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'kiosk-admin-token';
+let initializationPromise;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -43,6 +44,43 @@ app.use((req, res, next) => {
 });
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+const initializeBackend = async () => {
+  if (initializationPromise) {
+    return initializationPromise;
+  }
+
+  initializationPromise = (async () => {
+    console.log('\n🔄 Starting Kiosk Backend...');
+    console.log('MongoDB URI:', MONGO_URI);
+    console.log('Connecting to MongoDB...\n');
+
+    await mongoose.connect(MONGO_URI);
+    console.log('✓ Connected to MongoDB successfully\n');
+
+    await seedAdmin();
+    await seedInventoryDefaults();
+  })().catch((error) => {
+    initializationPromise = undefined;
+    throw error;
+  });
+
+  return initializationPromise;
+};
+
+app.use(async (req, res, next) => {
+  try {
+    await initializeBackend();
+    next();
+  } catch (error) {
+    console.error('\n✗ Failed to initialize backend');
+    console.error('Error:', error.message);
+    res.status(500).json({
+      message: 'Backend initialization failed.',
+      error: error.message,
+    });
+  }
+});
 
 const authMiddleware = (req, res, next) => {
   // Public routes that don't require authentication
@@ -96,15 +134,7 @@ const seedAdmin = async () => {
 
 const start = async () => {
   try {
-    console.log('\n🔄 Starting Kiosk Backend...');
-    console.log('MongoDB URI:', MONGO_URI);
-    console.log('Connecting to MongoDB...\n');
-    
-    await mongoose.connect(MONGO_URI);
-    console.log('✓ Connected to MongoDB successfully\n');
-
-    await seedAdmin();
-    await seedInventoryDefaults();
+    await initializeBackend();
 
     app.listen(PORT, () => {
       console.log(`✓ Server running on http://localhost:${PORT}\n`);
@@ -123,4 +153,11 @@ const start = async () => {
   }
 };
 
-start();
+if (require.main === module) {
+  start();
+}
+
+module.exports = {
+  app,
+  initializeBackend,
+};

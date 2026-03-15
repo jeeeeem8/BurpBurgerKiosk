@@ -5,11 +5,20 @@ import FoodCard from '../components/FoodCard.jsx';
 import OrderPanel from '../components/OrderPanel.jsx';
 import TicketCarousel from '../components/TicketCarousel.jsx';
 import useTickets from '../hooks/useTickets.js';
-import api from '../services/api.js';
+import api, { isApiUnavailable, isHostingOnlyMode } from '../services/api.js';
 import { SkeletonBox } from '../components/Skeleton.jsx';
 
 const categoryOrder = ['All', 'Burger', 'Rice Meal', 'Fries', 'Drinks'];
 const cardCategoryPriority = ['Burger', 'Rice Meal', 'Fries', 'Drinks'];
+
+const DEMO_MENU_ITEMS = [
+  { _id: 'demo-bb-bailey', name: 'BB Bailey', price: 128, category: 'Fries', image: '/uploads/1773228156948-173409711.jfif' },
+  { _id: 'demo-chic-fries', name: "Chic N' Fries", price: 178, category: 'Fries', image: '/uploads/1773228175117-675585244.jfif' },
+  { _id: 'demo-water', name: 'Bottled Water', price: 25, category: 'Drinks', image: '/uploads/1773228195656-401028025.jfif' },
+  { _id: 'demo-coke', name: 'Coca-Cola', price: 25, category: 'Drinks', image: '/uploads/1773228210728-697214540.jfif' },
+  { _id: 'demo-royal', name: 'Royal', price: 25, category: 'Drinks', image: '/uploads/1773228223852-526898661.jfif' },
+  { _id: 'demo-sprite', name: 'Sprite', price: 25, category: 'Drinks', image: '/uploads/1773228238631-79071060.jfif' },
+];
 
 // Addon mapping by category (supports both singular and plural)
 const categoryAddonMap = {
@@ -194,6 +203,13 @@ const Dashboard = () => {
   }, [activeCategory, menuItems]);
 
   const loadData = async () => {
+    if (isHostingOnlyMode) {
+      setMenuItems(DEMO_MENU_ITEMS.map((item) => ({ ...item, category: normalizeCategory(item.category) })));
+      setAddons([]);
+      setMenuLoading(false);
+      return;
+    }
+
     try {
       const [menuResponse, addonsResponse] = await Promise.all([api.get('/menu'), api.get('/addons')]);
       setMenuItems(
@@ -203,6 +219,21 @@ const Dashboard = () => {
         })),
       );
       setAddons(addonsResponse.data);
+    } catch (error) {
+      if (isApiUnavailable(error)) {
+        setMenuItems(DEMO_MENU_ITEMS.map((item) => ({ ...item, category: normalizeCategory(item.category) })));
+        setAddons([]);
+        await Swal.fire({
+          icon: 'info',
+          title: 'Demo Mode Enabled',
+          text: 'API is offline. Using local menu data on this deployed site.',
+          timer: 1800,
+          showConfirmButton: false,
+        });
+        return;
+      }
+
+      throw error;
     } finally {
       setMenuLoading(false);
     }
@@ -236,6 +267,10 @@ const Dashboard = () => {
   };
 
   const loadLowStockWarnings = async (showToast = false) => {
+    if (isHostingOnlyMode) {
+      return;
+    }
+
     const { data } = await api.get('/inventory/low-stock', { params: { threshold: 10 } });
     const lowStockItems = data?.items || [];
     const signature = JSON.stringify(lowStockItems.map((item) => `${item.name}:${item.quantity}`));
@@ -558,6 +593,21 @@ const Dashboard = () => {
       return;
     }
 
+    if (isHostingOnlyMode) {
+      updateTicket(activeTicket.ticketId, (ticket) => ({
+        ...ticket,
+        status: 'preparing',
+        placedOrderId: `demo-${Date.now()}`,
+      }));
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Order Placed (Demo)',
+        text: `Order #${activeTicket.orderNumber} was marked preparing locally.`,
+      });
+      return;
+    }
+
     setIsPlacing(true);
     try {
       const { data } = await api.post('/orders', {
@@ -581,6 +631,21 @@ const Dashboard = () => {
         text: `Order #${activeTicket.orderNumber} has been saved.`,
       });
     } catch (error) {
+      if (isApiUnavailable(error)) {
+        updateTicket(activeTicket.ticketId, (ticket) => ({
+          ...ticket,
+          status: 'preparing',
+          placedOrderId: `demo-${Date.now()}`,
+        }));
+
+        await Swal.fire({
+          icon: 'success',
+          title: 'Order Placed (Demo)',
+          text: `Order #${activeTicket.orderNumber} was marked preparing locally.`,
+        });
+        return;
+      }
+
       const outOfStockItems = error.response?.data?.outOfStockItems || [];
 
       if (error.response?.status === 409 && outOfStockItems.length) {
@@ -637,6 +702,20 @@ const Dashboard = () => {
       return;
     }
 
+    if (isHostingOnlyMode) {
+      deleteTicketHook(activeTicket.ticketId);
+      const remaining = tickets.filter((t) => t.ticketId !== activeTicket.ticketId);
+      setActiveTicketId(remaining[0]?.ticketId || null);
+      setIsMobileTicketWindowOpen(false);
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Order Completed (Demo)',
+        text: `Order #${activeTicket.orderNumber} completed locally.`,
+      });
+      return;
+    }
+
     setIsCompleting(true);
     try {
       const { data } = await api.patch(`/orders/${activeTicket.placedOrderId}/complete`);
@@ -658,6 +737,20 @@ const Dashboard = () => {
         await loadLowStockWarnings(true);
       }
     } catch (error) {
+      if (isApiUnavailable(error)) {
+        deleteTicketHook(activeTicket.ticketId);
+        const remaining = tickets.filter((t) => t.ticketId !== activeTicket.ticketId);
+        setActiveTicketId(remaining[0]?.ticketId || null);
+        setIsMobileTicketWindowOpen(false);
+
+        await Swal.fire({
+          icon: 'success',
+          title: 'Order Completed (Demo)',
+          text: `Order #${activeTicket.orderNumber} completed locally.`,
+        });
+        return;
+      }
+
       await Swal.fire({
         icon: 'error',
         title: 'Failed',
@@ -669,9 +762,9 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="grid gap-4 pb-20 sm:pb-0 xl:h-[calc(100vh-3rem)] xl:grid-rows-[auto_auto_minmax(0,1fr)] xl:overflow-hidden">
+    <div className="grid gap-4 pb-20 pt-28 sm:pb-0 sm:pt-0 xl:h-[calc(100vh-3rem)] xl:grid-rows-[auto_auto_minmax(0,1fr)] xl:overflow-hidden">
       <TicketCarousel
-        className="sticky top-16 z-20 rounded-xl border border-slate-200 bg-slate-100/95 px-3 py-2 shadow-md backdrop-blur sm:static sm:rounded-2xl sm:border-none sm:bg-white sm:px-4 sm:py-4 sm:shadow-sm sm:backdrop-blur-0"
+        className="fixed left-3 right-3 top-16 z-20 rounded-xl border border-slate-200 bg-slate-100/95 px-3 py-2 shadow-md backdrop-blur sm:static sm:rounded-2xl sm:border-none sm:bg-white sm:px-4 sm:py-4 sm:shadow-sm sm:backdrop-blur-0"
         tickets={carouselTickets}
         activeTicketId={activeTicketId}
         onCreateTicket={handleCreateNewTicket}

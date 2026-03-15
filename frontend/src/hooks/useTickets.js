@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import api from '../services/api.js';
+import api, { isHostingOnlyMode } from '../services/api.js';
 
 /**
  * useTickets Hook
@@ -22,6 +22,29 @@ const useTickets = () => {
   // Load tickets from backend on component mount
   useEffect(() => {
     const loadTicketsFromBackend = async () => {
+      if (isHostingOnlyMode) {
+        const savedTickets = localStorage.getItem(STORAGE_KEY);
+        const savedCounter = localStorage.getItem(COUNTER_KEY);
+
+        if (savedTickets) {
+          try {
+            setTickets(JSON.parse(savedTickets));
+          } catch {
+            setTickets([]);
+          }
+        }
+
+        if (savedCounter) {
+          try {
+            setOrderCounter(Number(savedCounter));
+          } catch {
+            setOrderCounter(1001);
+          }
+        }
+
+        return;
+      }
+
       try {
         // Fetch active/preparing orders from backend
         const response = await api.get('/orders/active/list');

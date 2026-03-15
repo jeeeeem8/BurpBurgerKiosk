@@ -1,4 +1,5 @@
 const express = require('express');
+const admin = require('firebase-admin');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -6,6 +7,7 @@ const MenuItem = require('../models/MenuItem');
 
 const router = express.Router();
 const validMenuCategories = new Set(['Burger', 'Rice Meal', 'Fries', 'Drinks']);
+const isCloudRuntime = Boolean(process.env.K_SERVICE || process.env.FUNCTION_TARGET || process.env.FIREBASE_CONFIG);
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -14,7 +16,7 @@ if (!fs.existsSync(uploadsDir)) {
   console.log('Created uploads directory:', uploadsDir);
 }
 
-const storage = multer.diskStorage({
+const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
   },
@@ -24,6 +26,40 @@ const storage = multer.diskStorage({
     cb(null, `${unique}${ext}`);
   },
 });
+
+const persistImage = async (file) => {
+  if (!file) {
+    return '';
+  }
+
+  if (!isCloudRuntime) {
+    return `uploads/${file.filename}`;
+  }
+
+  if (!admin.apps.length) {
+    throw new Error('Firebase Admin is not initialized.');
+  }
+
+  const bucket = admin.storage().bucket();
+  const ext = path.extname(file.originalname) || '.png';
+  const objectPath = `uploads/${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+  const bucketFile = bucket.file(objectPath);
+
+  await bucketFile.save(file.buffer, {
+    resumable: false,
+    metadata: {
+      contentType: file.mimetype,
+      cacheControl: 'public, max-age=31536000',
+    },
+  });
+
+  const [signedUrl] = await bucketFile.getSignedUrl({
+    action: 'read',
+    expires: '03-01-2500',
+  });
+
+  return signedUrl;
+};
 
 const fileFilter = (req, file, cb) => {
   // Accept ONLY JPEG and PNG
@@ -42,7 +78,7 @@ const fileFilter = (req, file, cb) => {
 };
 
 const upload = multer({ 
-  storage,
+  storage: isCloudRuntime ? multer.memoryStorage() : diskStorage,
   fileFilter,
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB max file size
@@ -103,11 +139,13 @@ router.post('/', upload.single('image'), uploadErrorHandler, async (req, res) =>
     }
 
     // Create item
+    const imagePath = await persistImage(req.file);
+
     const item = await MenuItem.create({
       name,
       price: Number(price),
       category,
-      image: req.file ? `uploads/${req.file.filename}` : '',
+      image: imagePath,
     });
 
     console.log('[MENU POST] ✓ Item created:', item._id);
@@ -162,7 +200,7 @@ router.put('/:id', upload.single('image'), uploadErrorHandler, async (req, res) 
     };
 
     if (req.file) {
-      payload.image = `uploads/${req.file.filename}`;
+      payload.image = await persistImage(req.file);
     }
 
     console.log('Updating menu item:', { id: req.params.id, ...payload });

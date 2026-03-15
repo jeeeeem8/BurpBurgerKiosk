@@ -1,12 +1,51 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:5000/api' : '/api');
+const FORCED_HOSTING_ONLY_MODE = import.meta.env.VITE_HOSTING_ONLY_MODE === 'true';
+
+const isFirebaseHostingDomain = () => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const host = window.location.hostname || '';
+  return host.endsWith('.web.app') || host.endsWith('.firebaseapp.com');
+};
+
+export const isHostingOnlyMode =
+  FORCED_HOSTING_ONLY_MODE ||
+  (!import.meta.env.DEV && !import.meta.env.VITE_API_URL && isFirebaseHostingDomain());
 
 const api = axios.create({
   baseURL: API_BASE_URL,
 });
 
+export const isApiUnavailable = (error) => {
+  if (error?.isDemoMode) {
+    return true;
+  }
+
+  const status = error?.response?.status;
+  const requestUrl = String(error?.config?.url || '');
+  const baseURL = String(error?.config?.baseURL || '');
+  const fullUrl = `${baseURL}${requestUrl}`;
+
+  if (!error?.response) {
+    return true;
+  }
+
+  return status === 404 && fullUrl.includes('/api/');
+};
+
 api.interceptors.request.use((config) => {
+  if (isHostingOnlyMode) {
+    return Promise.reject({
+      isDemoMode: true,
+      message: 'API disabled in hosting-only mode.',
+      config,
+    });
+  }
+
   const token = localStorage.getItem('kioskToken');
 
   if (token) {

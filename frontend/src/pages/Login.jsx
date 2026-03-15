@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import Swal from 'sweetalert2';
 import { useNavigate } from 'react-router-dom';
-import api from '../services/api.js';
+import api, { isApiUnavailable, isHostingOnlyMode } from '../services/api.js';
 
 const Login = () => {
   const navigate = useNavigate();
   const [form, setForm] = useState({ username: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
   const [isLogoReady, setIsLogoReady] = useState(true);
+  const demoUsername = import.meta.env.VITE_DEMO_USERNAME || 'admin';
+  const demoPassword = import.meta.env.VITE_DEMO_PASSWORD || 'admin123';
+  const demoToken = import.meta.env.VITE_DEMO_TOKEN || 'kiosk-admin-token';
 
   const handleChange = (event) => {
     setForm((prev) => ({ ...prev, [event.target.name]: event.target.value }));
@@ -17,15 +20,53 @@ const Login = () => {
     event.preventDefault();
     setIsLoading(true);
 
+    if (isHostingOnlyMode) {
+      if (form.username === demoUsername && form.password === demoPassword) {
+        localStorage.setItem('kioskToken', demoToken);
+        await Swal.fire({
+          icon: 'info',
+          title: 'Demo Mode Enabled',
+          text: 'Signed in without backend API.',
+          timer: 1400,
+          showConfirmButton: false,
+        });
+        navigate('/');
+      } else {
+        await Swal.fire({
+          icon: 'error',
+          title: 'Login Failed',
+          text: 'Invalid demo credentials.',
+        });
+      }
+
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const { data } = await api.post('/auth/login', form);
       localStorage.setItem('kioskToken', data.token);
       navigate('/');
     } catch (error) {
+      if (isApiUnavailable(error) && form.username === demoUsername && form.password === demoPassword) {
+        localStorage.setItem('kioskToken', demoToken);
+        await Swal.fire({
+          icon: 'info',
+          title: 'Demo Mode Enabled',
+          text: 'API is offline. You are signed in using local demo mode.',
+          timer: 1600,
+          showConfirmButton: false,
+        });
+        navigate('/');
+        return;
+      }
+
       await Swal.fire({
         icon: 'error',
         title: 'Login Failed',
-        text: error.response?.data?.message || 'Invalid username or password.',
+        text: isApiUnavailable(error)
+          ? 'API is offline and demo credentials did not match.'
+          : (error.response?.data?.message || 'Invalid username or password.'),
       });
     } finally {
       setIsLoading(false);
